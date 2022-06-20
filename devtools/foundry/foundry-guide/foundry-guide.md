@@ -11,6 +11,11 @@
   - [Generate a keystore file](#generate-a-keystore-file)
     - [Word of caution](#word-of-caution)
   - [Create a password file (optional)](#create-a-password-file-optional)
+  - [Helper scripts](#helper-scripts)
+    - [`_common.sh`](#_commonsh)
+    - [`cast-send.sh`](#cast-sendsh)
+    - [`forge-deploy.sh`](#forge-deploysh)
+    - [`forge-verify.sh`](#forge-verifysh)
 - [Connect to a node](#connect-to-a-node)
 
 <!-- vim-markdown-toc -->
@@ -122,9 +127,9 @@ Result:
 >   12daca79d3428f52ac8e9f210272d303f0e5135b  -
 ```
 
-If you can get the same result, it means that the content is the same, and therefore it should be safe to run.
-Nevertheless, if you are using Mac or Windows, you might get different results for the same source code because of
-differences in character encoding.
+If you get the same result, it means that the content is the same, and therefore it should be safe to run. Nevertheless,
+if you are using Mac or Windows, you might get a different checksum for the same source code because of differences in
+character encoding.
 
 ---
 
@@ -150,8 +155,9 @@ and doesn't matter and the _0x_ prefix can be omitted.
 ### Create a password file (optional)
 
 If you are comfortable doing this, you can create a plain-text file containing the password for the keystore file you
-provided above and set the `FOUNDRY_ETH_PASSWORD_FILE` variable in `.env` to **the path that file**. Otherwise, Foundry
-will prompt you for your password every time you need to send a transaction.
+provided. The path to this file can be put in the `FOUNDRY_ETH_PASSWORD_FILE` environment variable when used with the
+helper scripts provided below. Otherwise, Foundry will prompt you for your password every time you need to send a
+transaction.
 
 To create a password file you can:
 
@@ -160,6 +166,334 @@ touch "${HOME}/.eth-password" # Creates the file; the name or location doesn't m
 chmod 0600 "${HOME}/.eth-password" # Prevents other users in the system from accessing it
 # Edit the file and type-in/paste the password
 ```
+
+### Helper scripts
+
+To make the use of Foundry to submit transactions more ergonomic, you can use the following bash script wrappers. It is
+recommended that you put then into a `scripts/` directory in the root of any Foundry repositories:
+
+```
+.
+├── foundry.toml
+├── lib
+│   └── forge-std
+├── LICENSE
+├── scripts
+│   ├── _common.sh
+│   ├── cast-send.sh
+│   ├── forge-deploy.sh
+│   └── forge-verify.sh
+└── src
+```
+
+#### `_common.sh`
+
+Contains helper functions shared by all other files.
+
+Permissions: `0644` (read + write, read, read)
+
+<details>
+<summary>Source code</summary>
+
+```bash
+set +e
+[ -f "${BASH_SOURCE%/*}/../.env" ] && source "${BASH_SOURCE%/*}/../.env"
+set -e
+
+GREEN='\033[0;32m' # Green
+NC='\033[0m'       # No Color
+debug() {
+  printf '%b\n' "${GREEN}${*}${NC}" >&2
+}
+
+log() {
+  echo -e "$@" >&2
+}
+
+die() {
+  log "$@"
+  exit 1
+}
+
+# Normalizes the environment variables to be fully compatible with dapp.tools
+# @see https://github.com/foundry-rs/foundry/issues/1869
+normalize-env-vars() {
+  local ENV_FILE="${BASH_SOURCE%/*}/../.env"
+  [ -f "$ENV_FILE" ] && source "$ENV_FILE"
+
+  export FOUNDRY_ETH_FROM="${FOUNDRY_ETH_FROM:-$ETH_FROM}"
+  export FOUNDRY_ETH_KEYSTORE_DIR="${FOUNDRY_ETH_KEYSTORE_DIR:-$ETH_KEYSTORE}"
+  export FOUNDRY_ETH_PASSWORD_FILE="${FOUNDRY_ETH_PASSWORD_FILE:-$ETH_PASSWORD}"
+  export FOUNDRY_GAS_LIMIT="${FOUNDRY_GAS_LIMIT:-${ETH_GAS:-2500000}}"
+
+  if [ -z "$FOUNDRY_ETH_KEYSTORE_FILE" ]; then
+    [ -z "$FOUNDRY_ETH_KEYSTORE_DIR" ] && die "$(err-msg-keystore-file)"
+    # Foundry expects the Ethereum Keystore file, not the directory.
+    # This step assumes the Keystore file for the deployed wallet includes $ETH_FROM in its name.
+    export FOUNDRY_ETH_KEYSTORE_FILE="${FOUNDRY_ETH_KEYSTORE_DIR%/}/$(ls -1 $FOUNDRY_ETH_KEYSTORE_DIR |
+      # -i: case insensitive
+      # #0x: strip the 0x prefix from the the address
+      grep -i ${FOUNDRY_ETH_FROM#0x})"
+  fi
+
+  [ -n "$FOUNDRY_ETH_KEYSTORE_FILE" ] || die "$(err-msg-keystore-file)"
+
+  export FOUNDRY_ETHERSCAN_API_KEY="${FOUNDRY_ETHERSCAN_API_KEY:-$ETHERSCAN_API_KEY}"
+  # Some commands require the prefixed env var, while others require the unprefixed one.
+  export ETHERSCAN_API_KEY="$FOUNDRY_ETHERSCAN_API_KEY"
+}
+
+# Handle reading from the password file
+extract-password() {
+  [ -f "$FOUNDRY_ETH_PASSWORD_FILE" ] && cat "$FOUNDRY_ETH_PASSWORD_FILE"
+}
+
+err-msg-keystore-file() {
+  cat <<MSG
+ERROR: could not determine the location of the keystore file.
+
+You should either define:
+
+\t1. The FOUNDRY_ETH_KEYSTORE_FILE env var or;
+\t2. Both FOUNDRY_ETH_KEYSTORE_DIR and FOUNDRY_ETH_FROM env vars.
+MSG
+}
+
+err-msg-etherscan-api-key() {
+  cat <<MSG
+ERROR: cannot verify contracts without ETHERSCAN_API_KEY being set.
+
+You should either:
+
+\t1. Not use the --verify flag or;
+\t2. Define the ETHERSCAN_API_KEY env var.
+MSG
+}
+```
+
+</details>
+
+
+#### `cast-send.sh`
+
+Wraps `cast send` adding some sane defaults to it:
+
+- Automatically sets the gas limit for the transaction from the `FOUNDRY_GAS_LIMIT` environment variable.
+- Automatically derives the keystore file from the `FOUNDRY_ETH_FROM` environment variable.
+- Automatically reads the password file from the `FOUNDRY_ETH_PASSWORD_FILE` environment variable if set.
+- Prevents `stdout` from being flooded with logs. Sends all logs to `stderr` instead.
+- Outputs only the transaction hash to `stdout`.
+
+Permissions: `0755` (read + write + execute, read + execute, read + execute)
+
+<details>
+<summary>Source code</summary>
+
+```bash
+#!/bin/bash
+set -eo pipefail
+
+source "${BASH_SOURCE%/*}/_common.sh"
+
+send() {
+  normalize-env-vars
+
+  local PASSWORD="$(extract-password)"
+  if [ -n "$PASSWORD" ]; then
+    PASSWORD_OPT="--password=${PASSWORD}"
+  fi
+
+  local RESPONSE
+  # Log the command being issued, making sure not to expose the password
+  log "cast send --gas $FOUNDRY_GAS_LIMIT --keystore="$FOUNDRY_ETH_KEYSTORE_FILE" $(sed 's/=.*$/=[REDACTED]/' <<<"$PASSWORD_OPT") --json" $(printf ' %q' "$@")
+  # Currently `cast send` sends the logs to stdout instead of stderr.
+  # This makes it hard to compose its output with other commands, so here we are:
+  # 1. Duplicating stdout to stderr through `tee`
+  # 2. Extracting only the hash of the transaction to stdout
+  RESPONSE=$(cast send --gas $FOUNDRY_GAS_LIMIT --keystore="$FOUNDRY_ETH_KEYSTORE_FILE" "$PASSWORD_OPT" --json "$@" | tee >(cat 1>&2))
+
+  jq -r '.transactionHash' <<<"$RESPONSE"
+}
+
+usage() {
+  cat <<MSG
+cast-send.sh <address> <method_signature> [ ...args ]
+
+Examples:
+
+    # Method does not take any arguments
+    cast-send.sh 0xdead...0000 "someFunc()"
+
+    # Method takes (uint, address) arguments
+    cast-send.sh 0xdead...0000 'anotherFunc(uint, address)' --args 1 0x0000000000000000000000000000000000000000
+MSG
+}
+
+if [ "$0" = "$BASH_SOURCE" ]; then
+  [ "$1" = "-h" -o "$1" = "--help" ] && {
+    echo -e "\n$(usage)\n"
+    exit 0
+  }
+
+  send "$@"
+fi
+```
+
+</details>
+
+
+#### `forge-deploy.sh`
+
+Wraps `forge create` adding some sane defaults to it:
+
+- Automatically sets the gas limit for the transaction from the `FOUNDRY_GAS_LIMIT` environment variable.
+- Automatically derives the keystore file from the `FOUNDRY_ETH_FROM` environment variable.
+- Automatically reads the password file from the `FOUNDRY_ETH_PASSWORD_FILE` environment variable if set.
+- Prevents `stdout` from being flooded with logs. Sends all logs to `stderr` instead.
+- Outputs only the deployed contract address to `stdout`.
+
+Permissions: `0755` (read + write + execute, read + execute, read + execute)
+
+<details>
+<summary>Source code</summary>
+
+```bash
+#!/bin/bash
+set -eo pipefail
+
+source "${BASH_SOURCE%/*}/_common.sh"
+
+deploy() {
+  normalize-env-vars
+
+  local PASSWORD="$(extract-password)"
+  if [ -n "$PASSWORD" ]; then
+    PASSWORD_OPT="--password=${PASSWORD}"
+  fi
+
+  check-required-etherscan-api-key
+
+  local RESPONSE=
+  # Log the command being issued, making sure not to expose the password
+  log "forge create --gas-limit $FOUNDRY_GAS_LIMIT --keystore="$FOUNDRY_ETH_KEYSTORE_FILE" $(sed 's/=.*$/=[REDACTED]/' <<<"$PASSWORD_OPT") --json" $(printf ' %q' "$@")
+  # Currently `forge create` sends the logs to stdout instead of stderr.
+  # This makes it hard to compose its output with other commands, so here we are:
+  # 1. Duplicating stdout to stderr through `tee`
+  # 2. Extracting only the address of the deployed contract to stdout
+  RESPONSE=$(forge create --gas-limit $FOUNDRY_GAS_LIMIT --keystore="$FOUNDRY_ETH_KEYSTORE_FILE" "$PASSWORD_OPT" --json "$@" | tee >(cat 1>&2))
+
+  jq -Rr 'fromjson? | .deployedTo' <<<"$RESPONSE"
+}
+
+check-required-etherscan-api-key() {
+  # Require the Etherscan API Key if --verify option is enabled
+  set +e
+  if grep -- '--verify' <<<"$@" >/dev/null; then
+    [ -n "$FOUNDRY_ETHERSCAN_API_KEY" ] || die "$(err-msg-etherscan-api-key)"
+  fi
+  set -e
+}
+
+usage() {
+  cat <<MSG
+forge-deploy.sh [<file>:]<contract> [ --verify ] [ --constructor-args ...args ]
+
+Examples:
+
+    # Constructor does not take any arguments
+    forge-deploy.sh src/MyContract.sol:MyContract --verify
+
+    # Constructor takes (uint, address) arguments
+    forge-deploy.sh src/MyContract.sol:MyContract --verify --constructor-args 1 0x0000000000000000000000000000000000000000
+MSG
+}
+
+if [ "$0" = "$BASH_SOURCE" ]; then
+  [ "$1" = "-h" -o "$1" = "--help" ] && {
+    echo -e "\n$(usage)\n"
+    exit 0
+  }
+
+  deploy "$@"
+fi
+```
+
+</details>
+
+
+#### `forge-verify.sh`
+
+Wraps `forge verify-contract` adding some sane defaults to it:
+
+- Automatically derives the chain name parameter from the current `ETH_RPC_URL` environment variable.
+- Prevents `stdout` from being flooded with logs. Sends all logs to `stderr` instead.
+- Outputs only the verified contract Etherscan URL to `stdout`.
+
+Permissions: `0755` (read + write + execute, read + execute, read + execute)
+
+<details>
+<summary>Source code</summary>
+
+```bash
+#!/bin/bash
+set -eo pipefail
+
+source "${BASH_SOURCE%/*}/_common.sh"
+
+function verify() {
+  normalize-env-vars
+  check-required-etherscan-api-key
+
+  local CHAIN="$(cast chain)"
+  [ CHAIN = 'ethlive' ] && CHAIN='mainnet'
+
+  local RESPONSE=
+  # Log the command being issued
+  log "forge verify-contract --chain $CHAIN" $(printf ' %q' "$@")
+  # Currently `forge verify-contract` sends the logs to stdout instead of stderr.
+  # This makes it hard to compose its output with other commands, so here we are:
+  # 1. Duplicating stdout to stderr through `tee`
+  # 2. Extracting only the URL of the verified contract to stdout
+  RESPONSE=$(forge verify-contract --chain "$CHAIN" --watch "$@" | tee >(cat 1>&2))
+
+  # Display only the URL
+  if grep -E -i '^\s*Response:.*OK.*$' <<<"$RESPONSE" >/dev/null; then
+    grep -E -i '^\s*URL:' <<<"$RESPONSE" | head -1 | awk -F': ' '{ print $2 }' | sed -r 's/(^\s*|\s*$)//'
+  fi
+}
+
+function check-required-etherscan-api-key() {
+  [ -n "$FOUNDRY_ETHERSCAN_API_KEY" ] || die "$(err-msg-etherscan-api-key)"
+}
+
+function usage() {
+  cat <<MSG
+forge-verify.sh <address> <file>:<contract> [ --constructor-args <abi_encoded_args> ]
+
+Examples:
+
+    # Constructor does not take any arguments
+    forge-verify.sh 0xdead...0000 src/MyContract.sol:MyContract
+
+    # Constructor takes (uint, address) arguments. Don't forget to abi-encode them!
+    forge-verify.sh 0xdead...0000 src/MyContract.sol:MyContract \\
+        --constructor-args="\$(cast abi-encode 'constructor(uint, address)' 1 0x0000000000000000000000000000000000000000)"
+MSG
+}
+
+# Executes the function if it's been called as a script.
+# This will evaluate to false if this script is sourced by other script.
+if [ "$0" = "$BASH_SOURCE" ]; then
+  [ "$1" = "-h" -o "$1" = "--help" ] && {
+    echo -e "\n$(usage)\n"
+    exit 0
+  }
+
+  verify "$@"
+fi
+```
+
+</details>
 
 ## Connect to a node
 

@@ -62,6 +62,7 @@ You will need a good understanding of these concepts to be able to work through 
 - Risk parameters of a collateral type
 - Solidity
 - Foundry - `forge`, `cast`
+- Dapp Tools - `seth`
 
 ## Guide
 
