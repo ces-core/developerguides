@@ -12,7 +12,7 @@
 - [Guide](#guide)
   - [Set up the environment](#set-up-the-environment)
   - [Deploy spell dependencies](#deploy-spell-dependencies)
-    - [1. Set up the repo](#1-set-up-the-repo)
+    - [1. Set up the helper repo](#1-set-up-the-helper-repo)
     - [2. Deploy the collateral token contract](#2-deploy-the-collateral-token-contract)
     - [3. Mint collateral tokens](#3-mint-collateral-tokens)
     - [4. Define the collateral type](#4-define-the-collateral-type)
@@ -22,7 +22,7 @@
     - [8. Deploy a collateral auction pricing curve contract](#8-deploy-a-collateral-auction-pricing-curve-contract)
   - [Prepare the spell](#prepare-the-spell)
     - [0. Deploy the `DssExecLib`](#0-deploy-the-dssexeclib)
-  - [1. Set up the Goeri spells repo](#1-set-up-the-goeri-spells-repo)
+    - [1. Set up the Goeri spells repo](#1-set-up-the-goeri-spells-repo)
   - [Calculate Risk Parameters](#calculate-risk-parameters)
   - [Setup Spell](#setup-spell)
   - [Deploy Spell](#deploy-spell)
@@ -109,7 +109,7 @@ need to replace the addresses above with the respective contracts.
 
 This guide will use the [`dss-onboard-ilk-helper`](https://github.com/clio-finance/dss-onboard-ilk-helper) repo.
 
-#### 1. Set up the repo
+#### 1. Set up the helper repo
 
 ```bash
 git clone --recurse-submodules https://github.com/clio-finance/dss-onboard-ilk-helper
@@ -140,7 +140,7 @@ export TOKEN=$(scripts/forge-deploy.sh --verify DummyToken --constructor-args 'D
 `DummyToken`s are mintable by their owners:
 
 ```bash
-scripts/cast-send.sh $TOKEN 'mint(address,uint)' $ETH_FROM $(cast --to-wei 1000 ETH)
+scripts/cast-send.sh $TOKEN 'mint(address, uint)' $ETH_FROM $(cast --to-wei 1000 ETH)
 ```
 
 #### 4. Define the collateral type
@@ -161,7 +161,7 @@ system accepts the newly reported price to give users a chance to add more colla
 unsafe, and also for governance to trigger emergency shutdown if compromised oracles have input a malicious price value.
 
 Instead of deploying the full set of these contracts, you will only deploy a single `DSValue` contract without a price
-feed delay for testing purposes. You can retain admin permissions over it to update the price value manually . For
+feed delay for testing purposes. You can retain admin permissions over it to update the price value manually. For
 example, the command below sets the price of each token to 1000 USD.
 
 ```bash
@@ -270,7 +270,7 @@ CLIP_CALC=$(cast receipt --json $NEW_CLIP_CALC_TX | jq -r '.logs[0].address')
 ### Prepare the spell
 
 The [Goerli Spells repo](https://github.com/makerdao/spells-goerli) contain all the pieces required to successfully cast
-a MCD spell. You can clone the original repo locally in your machine or fork the repo.
+an MCD spell. You can clone the original repo locally in your machine or fork the repo.
 
 #### 0. Deploy the `DssExecLib`
 
@@ -316,7 +316,7 @@ RSPONSE=$(forge create DssExecLib --json --verify --gas-limit $FOUNDRY_GAS_LIMIT
 export DSS_EXEC_LIB=$(jq -Rr 'fromjson? | .deployedTo' <<<"$RESPONSE")
 ```
 
-### 1. Set up the Goeri spells repo
+#### 1. Set up the Goeri spells repo
 
 ```bash
 git clone --recurse-submodules https://github.com/makerdao/spells-goerli
@@ -517,4 +517,5 @@ In this guide you learned how to set up a new collateral type for a token and op
 
 ## Help
 
+- Discord - [#collateral-engineering-services-public](https://discord.com/channels/893112320329396265/897455346824671242)
 - Discord - [#protocol-engineering-public](https://discord.com/channels/893112320329396265/897479589171986434)
