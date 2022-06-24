@@ -86,14 +86,14 @@ Execute these commands to initialize environment variables with addresses of the
 
 ```bash
 export MCD_ADM=0x33Ed584fc655b08b2bca45E1C5b5f07c98053bC1
+export MCD_PAUSE=0xefcd235B1f13e7fC5eab1d05C910d3c390b3439F
+export MCD_PAUSE_PROXY=0x5DCdbD3cCF9B09EAAD03bc5f50fA2B3d3ACA0121
 export MCD_CAT=0xd744377001FD3411d7d0018F66E2271CB215f6fd
 export MCD_END=0xb82F60bAf6980b9fE035A82cF6Acb770C06d3896
 export MCD_JOIN_DAI=0x6a60b7070befb2bfc964F646efDF70388320f4E0
 export MCD_JUG=0xC90C99FE9B5d5207A03b9F28A6E8A19C0e558916
-export MCD_PAUSE=0xefcd235B1f13e7fC5eab1d05C910d3c390b3439F
 export MCD_SPOT=0xACe2A9106ec175bd56ec05C9E38FE1FDa8a1d758
 export MCD_VAT=0xB966002DDAa2Baf48369f5015329750019736031
-export MCD_PAUSE_PROXY=0x5DCdbD3cCF9B09EAAD03bc5f50fA2B3d3ACA0121
 export JOIN_FAB=0x0aaA1E0f026c194E0F951a7763F9edc796c6eDeE
 export CLIP_FAB=0xcfAab43101A01548A95F0f7dBB0CeF6f6490A389
 export CALC_FAB=0x579f007Fb7151162e3095606232ef9029E090366
@@ -173,6 +173,13 @@ You can verify that the value has been set.
 
 ```bash
 cast call $PIP 'read()(uint)'
+```
+
+Last, but not least, you need to transfer the ownership of the `DSValue` contract to the `MCD_PAUSE_PROXY` proxy
+contract, so it will be controlled by MakerDAO Governance:
+
+```bash
+scripts/cast-send.sh $PIP 'setOwner(address)' $MCD_PAUSE_PROXY
 ```
 
 #### 6. Deploy a token adapter
@@ -273,8 +280,8 @@ The [`DssExecLib`](https://github.com/makerdao/dss-exec-lib/) can be seen as an 
 Pattern](https://refactoring.guru/design-patterns/facade) on top of MCD. It aims to reduce the complexity of performing
 common changes to the system.
 
-However, there is a catch: `DssExecLib` cannot have any storage variables, so the chainlog address it requires needs to
-be hard-coded. For that reason, there needs to be 1 instance of `DssExecLib` for each MCD environment.
+However, there is a catch: `DssExecLib` cannot have any storage variables, so the chainlog address it requires must be
+hard-coded. For that reason, there needs to be 1 instance of `DssExecLib` for each MCD environment.
 
 First you need to clone the [`makerdao/dss-exec-lib`](https://github.com/makerdao/dss-exec-lib) repo:
 
@@ -300,7 +307,7 @@ The convenience scripts you've been using so far are not available, so you have 
 # This makes it hard to compose its output with other commands, so here we are:
 # 1. Duplicating stdout to stderr through `tee`
 # 2. Extracting only the address of the deployed contract to stdout
-RSPONSE=$(forge create DssExecLib --verify --json --gas-limit $FOUNDRY_GAS_LIMIT \
+RSPONSE=$(forge create DssExecLib --json --verify --gas-limit $FOUNDRY_GAS_LIMIT \
   --keystore "${HOME}/.ethereum/keystore/<YOUR_KEYSTORE_FILE>" \
   # If --password is omitted, forge will prompt you for the password
   --password $(cat "${HOME}/.eth-password") | \
@@ -328,6 +335,8 @@ echo $DSS_EXEC_LIB > ./DssExecLib.address
 ---
 
 <!-- TODO -->
+
+⚠️ From this point on, the guide is outdated! ⚠️
 
 ### Calculate Risk Parameters
 
