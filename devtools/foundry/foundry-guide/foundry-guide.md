@@ -149,8 +149,13 @@ Fill in the prompts like the image below:
 
 ![eth-keys-instructions](https://i.imgur.com/0tsesY6.png)
 
-**⚠️ IMPORTANT:** The exact keystore name is not important, however it **MUST** include the wallet address. Letter case
+**ℹ️ NOTICE:** The exact keystore name is not important, however it **MUST** include the wallet address. Letter case
 and doesn't matter and the _0x_ prefix can be omitted.
+
+**⚠️ WARNING:** `eth-keys` depends on `ethers.js` and there is currently an [open
+issue](https://github.com/ethers-io/ethers.js/issues/3075) regarding the generation of keystore files. The short term
+solution is to edit the generated JSON file and replace the `"Crypto"` key (with upper `C`) with `"crypto"` (with lower
+`C`).
 
 ### Create a password file (optional)
 
@@ -273,7 +278,6 @@ MSG
 
 </details>
 
-
 #### `cast-send.sh`
 
 Wraps `cast send` adding some sane defaults to it:
@@ -340,7 +344,6 @@ fi
 ```
 
 </details>
-
 
 #### `forge-deploy.sh`
 
@@ -419,7 +422,6 @@ fi
 ```
 
 </details>
-
 
 #### `forge-verify.sh`
 
